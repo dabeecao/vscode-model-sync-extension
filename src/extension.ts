@@ -11,9 +11,11 @@ import { getWebviewContent, WebviewState } from "./webview";
 const SECRET_KEY = "modelSync.apiKey";
 const VIEW_ID = "modelSyncView";
 
+interface SyncState extends Omit<WebviewState, "hasApiKey"> {}
+
 export function activate(context: vscode.ExtensionContext) {
   // ── shared state helpers ───────────────────────────────────────────────
-  const getState = async (): Promise<WebviewState> => {
+  const getState = async (): Promise<SyncState> => {
     const cfg = vscode.workspace.getConfiguration("modelSync");
     const apiKey = (await context.secrets.get(SECRET_KEY)) ?? "";
     return {
@@ -24,6 +26,15 @@ export function activate(context: vscode.ExtensionContext) {
       includeImageModels: cfg.get<boolean>("includeImageModels", false),
       forceKeep: cfg.get<string[]>("forceKeep", []),
       configPath: cfg.get<string>("configPath", "") || getConfigPath(),
+    };
+  };
+
+  const getWebviewState = async (): Promise<WebviewState> => {
+    const state = await getState();
+    return {
+      ...state,
+      apiKey: "",
+      hasApiKey: Boolean(state.apiKey),
     };
   };
 
@@ -51,13 +62,13 @@ export function activate(context: vscode.ExtensionContext) {
     if (state.configPath !== undefined) {
       await cfg.update("configPath", state.configPath, vscode.ConfigurationTarget.Global);
     }
-    if (state.apiKey !== undefined) {
+    if (state.apiKey) {
       await context.secrets.store(SECRET_KEY, state.apiKey);
     }
   };
 
   const doSync = async (
-    state: WebviewState,
+    state: SyncState,
     log: (msg: string) => void
   ): Promise<SyncResult> => {
     if (!state.baseUrl) {
@@ -117,7 +128,7 @@ export function activate(context: vscode.ExtensionContext) {
       view.webview.options = { enableScripts: true };
 
       const render = async () => {
-        const state = await getState();
+        const state = await getWebviewState();
         view.webview.html = getWebviewContent(view.webview, state);
       };
       void render();
@@ -128,7 +139,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         switch (message.command) {
           case "ready": {
-            const s = await getState();
+            const s = await getWebviewState();
             post({ command: "init", state: s });
             break;
           }
@@ -155,7 +166,9 @@ export function activate(context: vscode.ExtensionContext) {
             break;
           }
           case "testConnection": {
-            const { baseUrl, apiKey } = message;
+            const saved = await getState();
+            const baseUrl = String(message.baseUrl ?? "");
+            const apiKey = String(message.apiKey || saved.apiKey);
             if (!baseUrl || !apiKey) {
               post({
                 command: "testResult",
@@ -181,11 +194,14 @@ export function activate(context: vscode.ExtensionContext) {
             break;
           }
           case "sync": {
-            const current: WebviewState = {
-              ...(await getState()),
-              ...message.state,
+            const saved = await getState();
+            const submitted = message.state as Partial<WebviewState>;
+            const current: SyncState = {
+              ...saved,
+              ...submitted,
+              apiKey: submitted.apiKey || saved.apiKey,
             };
-            await persistState(current);
+            await persistState(submitted);
 
             post({ command: "syncStart" });
             const result = await doSync(current, (msg) =>

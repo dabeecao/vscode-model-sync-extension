@@ -216,7 +216,7 @@ export async function fetchModels(
   baseUrl: string,
   apiKey: string
 ): Promise<Record<string, unknown>[]> {
-  const url = baseUrl.replace(/\/+$/, "") + "/v1/models";
+  const url = normalizeBase(baseUrl) + "/v1/models";
 
   let resp: Response;
   try {
@@ -350,7 +350,7 @@ export function filterImageModels(
 export function loadConfig(configPath: string): ProviderEntry[] {
   if (!fs.existsSync(configPath)) {
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    return [{ name: "OpenAI-compatible", models: [] }];
+    return [];
   }
 
   const raw = fs.readFileSync(configPath, "utf-8");
@@ -372,8 +372,43 @@ export function saveConfig(configPath: string, config: ProviderEntry[]): void {
   fs.renameSync(tmp, configPath);
 }
 
-function normalizeBase(url: string): string {
+export function normalizeBase(url: string): string {
   return url.replace(/\/+$/, "").replace(/\/v1$/, "");
+}
+
+export function createProviderName(baseUrl: string): string {
+  try {
+    return `OpenAI-compatible (${new URL(normalizeBase(baseUrl)).hostname})`;
+  } catch {
+    return "OpenAI-compatible";
+  }
+}
+
+export function selectOrCreateProvider(
+  config: ProviderEntry[],
+  baseUrl: string
+): ProviderEntry {
+  const baseNorm = normalizeBase(baseUrl);
+  const matched = config.find((provider) =>
+    (provider.models ?? []).some(
+      (model) => normalizeBase(String(model.url ?? "")) === baseNorm
+    )
+  );
+
+  if (matched) {
+    return matched;
+  }
+
+  if (config.length === 1 && (config[0].models ?? []).length === 0) {
+    return config[0];
+  }
+
+  const provider: ProviderEntry = {
+    name: createProviderName(baseUrl),
+    models: [],
+  };
+  config.push(provider);
+  return provider;
 }
 
 /** Run the full sync operation. */
@@ -410,30 +445,10 @@ export async function runSync(options: SyncOptions): Promise<SyncResult> {
     const keepSet = new Set(keep);
     const baseNorm = normalizeBase(baseUrl);
 
-    if (config.length === 0) {
-      config.push({ name: "OpenAI-compatible", models: [] });
-    }
-
-    let target: ProviderEntry | undefined;
-    for (const provider of config) {
-      const models = provider.models ?? [];
-      if (models.length === 0) {
-        continue;
-      }
-      if (
-        models.some(
-          (m) => normalizeBase(String(m.url ?? "")) === baseNorm
-        )
-      ) {
-        target = provider;
-        break;
-      }
-    }
-    if (!target) {
-      target = config[0];
-      log(
-        `No provider matched ${baseUrl}, using first provider: ${target.name ?? ""}`
-      );
+    const providerCount = config.length;
+    const target = selectOrCreateProvider(config, baseUrl);
+    if (config.length > providerCount) {
+      log(`No provider matched ${baseUrl}; created provider: ${target.name ?? ""}`);
     }
 
     result.providerName = String(target.name ?? "");

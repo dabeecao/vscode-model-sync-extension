@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 export interface WebviewState {
   baseUrl: string;
   apiKey: string;
+  hasApiKey: boolean;
   dryRun: boolean;
   prune: boolean;
   includeImageModels: boolean;
@@ -815,13 +816,13 @@ export function getWebviewContent(
     }
     function applyState(s) {
       $("baseUrl").value = s.baseUrl || "";
-      $("apiKey").value = s.apiKey || "";
+      $("apiKey").value = "";
       $("dryRun").checked = !!s.dryRun;
       $("prune").checked = s.prune !== false;
       $("includeImageModels").checked = !!s.includeImageModels;
       $("forceKeep").value = (s.forceKeep || []).join(" ");
       $("configPath").value = s.configPath || "";
-      refreshKeyChip(s.apiKey);
+      refreshKeyChip(s.hasApiKey);
     }
     function setStatus(text, kind) {
       const el = $("status");
